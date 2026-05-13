@@ -76,7 +76,7 @@ enabled = true                                    # agent sets to false on succe
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `id` | ✅ (when `disable_on_success` set) | — | Stable unique identifier for state persistence |
+| `id` | ✅ (when `disable_on_success` set) | — | Stable unique identifier for state persistence. Missing `id` on a job with `disable_on_success` is a **startup error**. |
 | `disable_on_success` | | — | Shell command; exit 0 = goal achieved, auto-disable |
 | `disable_on_success_timeout_secs` | | `60` | Max seconds before command is killed |
 | `disable_on_success_working_dir` | | — | Working directory for command execution |
@@ -113,7 +113,7 @@ No separate state file needed. When goal is achieved, agent writes `enabled = fa
 
 | Event | Action |
 |-------|--------|
-| Goal achieved (exit 0) | Agent sets `enabled = false` in usercron file |
+| Goal achieved (exit 0) | Post `✅ Goal achieved: <description>` to thread, then set `enabled = false` in usercron file |
 | Human re-enables | Human sets `enabled = true` (or bumps `generation`) |
 | Thread auto-created | Agent writes `thread_id` back to usercron file |
 
@@ -159,7 +159,7 @@ Future phases may add container isolation or command whitelists.
    - Check `enabled` — if false, skip
    - Check `generation` — if config > last known, treat as re-enabled
    - Execute command with `disable_on_success_timeout_secs` and `disable_on_success_working_dir`
-   - exit 0 → write `enabled = false` to usercron file, skip message
+   - exit 0 → post `✅ Goal achieved` to thread, write `enabled = false` to usercron file
    - exit != 0 / timeout exceeded → send message as normal
 3. Thread auto-creation: if `thread_id` empty, create thread on first fire, write back to usercron file
 4. No separate state file — usercron IS the state
@@ -212,7 +212,6 @@ Phase 1 `[[cron.jobs]]` entries with `disable_on_success` remain valid and coexi
 1. **Multi-agent coordination** — How do agents avoid conflicting actions when self-organizing?
 2. **Observability** — Should we log command output / exit codes for debugging?
 3. **Context overflow** — Long-running goals accumulate thread history; summarization strategy TBD
-4. **Notification on success** — Should auto-disable post a "✅ Goal achieved" message, or silently stop?
 
 ---
 
