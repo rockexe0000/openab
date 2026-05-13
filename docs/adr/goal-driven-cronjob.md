@@ -55,7 +55,10 @@ Phase 1 proves the concept. Phase 2 adds sophistication only after validation.
 
 ### Configuration
 
+`disable_on_success` is **only supported in usercron** (`.openab/usercron/cronjob.toml`), NOT in global config. This is because auto-disable needs to write state back to the file, and only usercron is agent-writable.
+
 ```toml
+# .openab/usercron/cronjob.toml
 [[cron.jobs]]
 id = "unit-tests-pass"                            # required for disable_on_success jobs
 schedule = "*/10 * * * *"
@@ -66,6 +69,7 @@ disable_on_success = "npm test"                   # command to evaluate goal
 disable_on_success_timeout_secs = 60              # command timeout
 disable_on_success_working_dir = "/repo"          # working directory
 generation = 1                                    # bump to re-enable after auto-disable
+enabled = true                                    # agent sets to false on success
 ```
 
 ### New Fields
@@ -105,29 +109,23 @@ CronJob schedule fires
 
 ### State Persistence
 
-Persisted in `cron-state.json`, keyed by job `id`:
+No separate state file needed. When goal is achieved, agent writes `enabled = false` directly to `.openab/usercron/cronjob.toml`. State lives in the config itself.
 
-```json
-{
-  "unit-tests-pass": {
-    "generation": 1,
-    "auto_disabled": true,
-    "auto_disabled_at": "2026-05-13T22:00:00Z",
-    "thread_id": "1504239931940409587"
-  }
-}
-```
+| Event | Action |
+|-------|--------|
+| Goal achieved (exit 0) | Agent sets `enabled = false` in usercron file |
+| Human re-enables | Human sets `enabled = true` (or bumps `generation`) |
+| Thread auto-created | Agent writes `thread_id` back to usercron file |
 
-Loaded on startup, written on state change.
+This works because usercron is designed to be agent-writable, unlike global config.
 
 ### Re-enable Logic
 
-```
-config.generation > persisted.generation?
-    │
-   Yes → Clear auto_disabled state, job runs again
-   No  → Job stays disabled
-```
+Human edits `.openab/usercron/cronjob.toml`:
+- Set `enabled = true`, or
+- Bump `generation` (e.g. `generation = 2`)
+
+Either action signals intentional re-activation. No ambiguity, no separate state file to manage.
 
 Human bumps `generation = 2` in config → job reactivates. No ambiguity, no conflict with existing fields.
 
@@ -156,14 +154,15 @@ Future phases may add container isolation or command whitelists.
 
 ### Phase 1 (This ADR)
 
-1. Parse new fields from `[[cron.jobs]]` config
+1. Parse new fields from usercron `[[cron.jobs]]` (`.openab/usercron/cronjob.toml`)
 2. On cron fire, if `disable_on_success` is set:
-   - Check persisted state (generation match → skip if auto-disabled)
+   - Check `enabled` — if false, skip
+   - Check `generation` — if config > last known, treat as re-enabled
    - Execute command with `disable_on_success_timeout_secs` and `disable_on_success_working_dir`
-   - exit 0 → persist auto-disabled state, skip message
+   - exit 0 → write `enabled = false` to usercron file, skip message
    - exit != 0 / timeout exceeded → send message as normal
-3. Thread auto-creation: if `thread_id` empty, create thread on first fire, persist
-4. State file: read/write `cron-state.json`
+3. Thread auto-creation: if `thread_id` empty, create thread on first fire, write back to usercron file
+4. No separate state file — usercron IS the state
 
 ### Phase 2 (Future — Not This ADR)
 
@@ -190,15 +189,15 @@ Phase 1 `[[cron.jobs]]` entries with `disable_on_success` remain valid and coexi
 
 ### Restart Resilience
 
-1. Job is auto-disabled (goal achieved)
+1. Job is auto-disabled (agent wrote `enabled = false` to usercron)
 2. Process restarts
-3. State loaded from `cron-state.json` → job stays disabled
+3. Usercron loaded → `enabled = false` → job stays disabled
 
 ### Re-enable
 
-1. Job is auto-disabled (`generation: 1` in state)
-2. Human bumps config to `generation = 2`
-3. Next fire → generation mismatch → clear auto-disable → run command again
+1. Job is disabled (`enabled = false` in usercron)
+2. Human edits usercron: sets `enabled = true` (or bumps `generation`)
+3. Next fire → job runs again
 
 ### Timeout
 
