@@ -179,7 +179,7 @@ Phase 1 `[[cron.jobs]]` entries with `disable_on_success` remain valid and coexi
 1. Repo has one failing test
 2. Cron fires every 10 min with `disable_on_success = "npm test"`
 3. `npm test` fails → message sent → agents discuss and fix
-4. Next fire → `npm test` passes → job auto-disables, no message
+4. Next fire → `npm test` passes → scheduler posts `✅ Goal achieved`, sets `enabled = false`
 
 ### Restart Resilience
 
