@@ -129,7 +129,7 @@ config.generation > persisted.generation?
    No  → Job stays disabled
 ```
 
-Human bumps `generation = 2` in config → job reactivates. No ambiguity, no conflict with `enabled` field.
+Human bumps `generation = 2` in config → job reactivates. No ambiguity, no conflict with existing fields.
 
 ### Thread Lifecycle
 
@@ -159,9 +159,9 @@ Future phases may add container isolation or command whitelists.
 1. Parse new fields from `[[cron.jobs]]` config
 2. On cron fire, if `disable_on_success` is set:
    - Check persisted state (generation match → skip if auto-disabled)
-   - Execute command with timeout and working_dir
+   - Execute command with `disable_on_success_timeout_secs` and `disable_on_success_working_dir`
    - exit 0 → persist auto-disabled state, skip message
-   - exit != 0 / timeout → send message as normal
+   - exit != 0 / timeout exceeded → send message as normal
 3. Thread auto-creation: if `thread_id` empty, create thread on first fire, persist
 4. State file: read/write `cron-state.json`
 
