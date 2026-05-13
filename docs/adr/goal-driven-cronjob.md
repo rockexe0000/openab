@@ -14,9 +14,9 @@ As an OpenAB operator, I want to define a **goal** that agents must achieve, whe
 As a team lead, I want agents to self-organize ("escape room" mode) — I tell them the goal, not the steps.
 
 Requirements:
-- Extend existing `[[cron.jobs]]` with a `disable_on_success` field
+- Extend existing usercron `[[jobs]]` with a `disable_on_success` field
 - Before sending the scheduled message, run the specified command
-- If command exits 0 → goal achieved, auto-disable the job, do NOT send message
+- If command exits 0 → goal achieved, post `✅ Goal achieved` to thread, auto-disable the job, do NOT send the regular failure message
 - If command exits non-zero → goal not met, send message as normal (agents continue working)
 - Auto-disable state must persist across restarts
 - Human can re-enable a completed goal by setting `enabled = true`
@@ -39,9 +39,9 @@ We considered two approaches:
 | Approach | Pros | Cons |
 |----------|------|------|
 | New `[[goals]]` config section | Clean separation, dedicated semantics | New scheduler, new state machine, large MVP |
-| Extend `[[cron.jobs]]` | Minimal change, reuses existing infra | Slightly overloaded config section |
+| Extend usercron `[[jobs]]` | Minimal change, reuses existing infra | Slightly overloaded config section |
 
-**Decision: Extend `[[cron.jobs]]`** — Phase 1 is literally "cron + exit check + auto-disable." The existing scheduler, channel routing, and thread handling all apply. A full goal runner with state delta detection and escalation is deferred to Phase 2.
+**Decision: Extend usercron `[[jobs]]`** — Phase 1 is literally "cron + exit check + auto-disable." The existing scheduler, channel routing, and thread handling all apply. A full goal runner with state delta detection and escalation is deferred to Phase 2.
 
 ### Design Principle: Smallest Useful Increment
 
@@ -168,7 +168,7 @@ Introduce `[[goals]]` config section with:
 - Escalation messages with decision options
 - Round counter and progress reporting
 
-Phase 1 `[[cron.jobs]]` entries with `disable_on_success` remain valid and coexist with Phase 2 `[[goals]]` — no migration required.
+Phase 1 usercron `[[jobs]]` entries with `disable_on_success` remain valid and coexist with Phase 2 `[[goals]]` — no migration required.
 
 ---
 
