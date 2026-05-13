@@ -98,7 +98,7 @@ Auto-disable state must survive restarts. Persisted per job:
 
 Storage: **local JSON state file** (`cron-state.json`) — loaded on startup, written on state change.
 
-Key rule: **config reload does NOT re-enable an auto-disabled job.** Only explicit `enabled = true` in config (human intent) can re-enable it.
+Key rule: **Persisted state takes precedence over config for auto-disabled jobs.** When a job is auto-disabled (exit 0), the state file records `auto_disabled_at`. From that point, the config `enabled` field is ignored for this job. To re-enable, the human must **both** set `enabled = true` in config **and** remove the `auto_disabled_at` entry from state (or delete the state entry entirely). This prevents config reload from accidentally resurrecting a completed goal.
 
 ### Security
 
@@ -140,7 +140,7 @@ Key rule: **config reload does NOT re-enable an auto-disabled job.** Only explic
 
 # Phase 2: Full Goal Runner (Future Design)
 
-When Phase 1 is proven, extend with richer goal semantics.
+When Phase 1 is proven, extend with richer goal semantics. Phase 2 will introduce a new `[[goals]]` config section; Phase 1 `[[cron.jobs]]` entries with `disable_on_success` remain valid and coexist — no migration required.
 
 ## Additional Capabilities
 
