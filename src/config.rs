@@ -339,6 +339,8 @@ pub struct CronJobConfig {
     /// Whether this cronjob is active (default: true)
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Stable unique identifier (required when disable_on_success is set)
+    pub id: Option<String>,
     /// Cron expression (5-field POSIX format)
     pub schedule: String,
     /// Target channel ID

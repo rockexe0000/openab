@@ -475,20 +475,18 @@ pub async fn run_scheduler(
                     }
 
                     // Check disable_on_success before firing (usercron jobs only)
-                    if job.config.disable_on_success.is_some() {
-                        let is_usercron = idx >= baseline_len;
-                        if evaluate_disable_on_success(&job.config) {
+                    let is_usercron = idx >= baseline_len;
+                    if is_usercron && job.config.disable_on_success.is_some() {
+                        if evaluate_disable_on_success(&job.config).await {
                             info!(
                                 schedule = %job.config.schedule,
                                 channel = %job.config.channel,
                                 "✅ disable_on_success: goal achieved, disabling job"
                             );
                             // Write enabled=false back to usercron file
-                            if is_usercron {
-                                if let Some(ref path) = usercron_path {
-                                    if let Err(e) = disable_job_in_usercron(path, &job.config) {
-                                        error!(error = %e, "failed to disable job in usercron file");
-                                    }
+                            if let Some(ref path) = usercron_path {
+                                if let Err(e) = disable_job_in_usercron(path, &job.config) {
+                                    error!(error = %e, "failed to disable job in usercron file");
                                 }
                             }
                             // Post success notification to channel
@@ -672,14 +670,14 @@ async fn fire_cronjob(
 
 /// Evaluate the `disable_on_success` command for a cron job.
 /// Returns `true` if the goal is achieved (command exits 0 and optional match passes).
-fn evaluate_disable_on_success(job: &CronJobConfig) -> bool {
+async fn evaluate_disable_on_success(job: &CronJobConfig) -> bool {
     let cmd = match &job.disable_on_success {
         Some(c) => c,
         None => return false,
     };
 
     let timeout_secs = job.disable_on_success_timeout_secs.unwrap_or(60);
-    let mut command = std::process::Command::new("sh");
+    let mut command = tokio::process::Command::new("sh");
     command
         .arg("-c")
         .arg(cmd)
@@ -690,51 +688,31 @@ fn evaluate_disable_on_success(job: &CronJobConfig) -> bool {
         command.current_dir(dir);
     }
 
-    let mut child = match command.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(command = %cmd, error = %e, "disable_on_success: failed to spawn command");
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        command.output(),
+    )
+    .await;
+
+    let output = match result {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            warn!(command = %cmd, error = %e, "disable_on_success: failed to execute command");
+            return false;
+        }
+        Err(_) => {
+            warn!(command = %cmd, timeout_secs, "disable_on_success: command timed out");
             return false;
         }
     };
 
-    // Wait with timeout
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return false;
-                }
-                break;
-            }
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    warn!(command = %cmd, timeout_secs, "disable_on_success: command timed out, killing");
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(e) => {
-                warn!(command = %cmd, error = %e, "disable_on_success: error waiting for command");
-                return false;
-            }
-        }
+    if !output.status.success() {
+        return false;
     }
 
     // Check optional match string against stdout
     if let Some(ref match_str) = job.disable_on_success_match {
-        let stdout = child
-            .stdout
-            .map(|mut s| {
-                let mut buf = String::new();
-                use std::io::Read;
-                let _ = s.read_to_string(&mut buf);
-                buf
-            })
-            .unwrap_or_default();
+        let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains(match_str.as_str()) {
             info!(
                 command = %cmd,
@@ -749,39 +727,76 @@ fn evaluate_disable_on_success(job: &CronJobConfig) -> bool {
 }
 
 /// Disable a job in the usercron TOML file by setting `enabled = false`.
-/// Uses a simple text-based approach to preserve formatting.
+/// Matches by `id` field. Uses line-based editing to preserve comments and formatting.
 fn disable_job_in_usercron(path: &Path, job: &CronJobConfig) -> Result<(), String> {
+    let job_id = job
+        .id
+        .as_deref()
+        .ok_or_else(|| "job has no id, cannot disable in usercron".to_string())?;
+
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("failed to read usercron file: {e}"))?;
 
-    // Parse the file to find the matching job and update it
-    let mut parsed: toml::Value =
-        toml::from_str(&content).map_err(|e| format!("failed to parse usercron file: {e}"))?;
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result = Vec::with_capacity(lines.len() + 1);
+    let mut in_target_job = false;
+    let mut found = false;
+    let mut has_enabled_field = false;
 
-    let jobs = parsed
-        .get_mut("jobs")
-        .and_then(|v| v.as_array_mut())
-        .ok_or_else(|| "no [[jobs]] array in usercron file".to_string())?;
+    for line in &lines {
+        // Detect [[jobs]] header
+        if line.trim() == "[[jobs]]" {
+            // If we were in the target job and it had no enabled field, insert one
+            if in_target_job && !has_enabled_field {
+                result.push("enabled = false".to_string());
+            }
+            in_target_job = false;
+            has_enabled_field = false;
+            result.push(line.to_string());
+            continue;
+        }
 
-    // Find the job by matching schedule + channel + message
-    let found = jobs.iter_mut().find(|j| {
-        let sched_match = j.get("schedule").and_then(|v| v.as_str()) == Some(&job.schedule);
-        let chan_match = j.get("channel").and_then(|v| v.as_str()) == Some(&job.channel);
-        let msg_match = j.get("message").and_then(|v| v.as_str()) == Some(&job.message);
-        sched_match && chan_match && msg_match
-    });
-
-    match found {
-        Some(entry) => {
-            if let Some(table) = entry.as_table_mut() {
-                table.insert("enabled".to_string(), toml::Value::Boolean(false));
+        // Detect id field to identify target job
+        if line.trim().starts_with("id") {
+            let value = line
+                .split('=')
+                .nth(1)
+                .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string());
+            if value.as_deref() == Some(job_id) {
+                in_target_job = true;
+                found = true;
             }
         }
-        None => return Err("could not find matching job in usercron file".to_string()),
+
+        // If in target job and we find enabled field, replace it
+        if in_target_job && line.trim().starts_with("enabled") {
+            has_enabled_field = true;
+            result.push("enabled = false".to_string());
+            continue;
+        }
+
+        result.push(line.to_string());
     }
 
-    let new_content = toml::to_string_pretty(&parsed)
-        .map_err(|e| format!("failed to serialize usercron file: {e}"))?;
+    // Handle case where target job is the last one and has no enabled field
+    if in_target_job && !has_enabled_field {
+        result.push("enabled = false".to_string());
+    }
+
+    if !found {
+        return Err(format!(
+            "could not find job with id {:?} in usercron file",
+            job_id
+        ));
+    }
+
+    let new_content = result.join("\n");
+    // Preserve trailing newline if original had one
+    let new_content = if content.ends_with('\n') && !new_content.ends_with('\n') {
+        new_content + "\n"
+    } else {
+        new_content
+    };
 
     std::fs::write(path, new_content).map_err(|e| format!("failed to write usercron file: {e}"))?;
 
@@ -1245,6 +1260,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_valid_passes() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: true,
             schedule: "0 9 * * 1-5".into(),
             channel: "123".into(),
@@ -1264,6 +1280,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_invalid_cron_fails() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: true,
             schedule: "bad".into(),
             channel: "123".into(),
@@ -1284,6 +1301,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_invalid_timezone_fails() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: true,
             schedule: "* * * * *".into(),
             channel: "123".into(),
@@ -1304,6 +1322,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_unknown_platform_fails() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: true,
             schedule: "* * * * *".into(),
             channel: "123".into(),
@@ -1324,6 +1343,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_unconfigured_platform_fails() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: true,
             schedule: "* * * * *".into(),
             channel: "123".into(),
@@ -1344,6 +1364,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_disabled_with_invalid_cron_passes() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: false,
             schedule: "bad".into(),
             channel: "123".into(),
@@ -1363,6 +1384,7 @@ platform = "slack"
     #[test]
     fn validate_cronjobs_enabled_with_invalid_cron_still_fails() {
         let jobs = vec![CronJobConfig {
+            id: None,
             enabled: true,
             schedule: "bad".into(),
             channel: "123".into(),
@@ -1455,10 +1477,12 @@ command = "echo"
 
     // --- disable_on_success ---
 
-    #[test]
-    fn evaluate_disable_on_success_none_returns_false() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_none_returns_false() {
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1471,13 +1495,15 @@ command = "echo"
             disable_on_success_timeout_secs: None,
             disable_on_success_working_dir: None,
         };
-        assert!(!evaluate_disable_on_success(&job));
+        assert!(!evaluate_disable_on_success(&job).await);
     }
 
-    #[test]
-    fn evaluate_disable_on_success_exit_zero_returns_true() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_exit_zero_returns_true() {
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1490,13 +1516,15 @@ command = "echo"
             disable_on_success_timeout_secs: Some(5),
             disable_on_success_working_dir: None,
         };
-        assert!(evaluate_disable_on_success(&job));
+        assert!(evaluate_disable_on_success(&job).await);
     }
 
-    #[test]
-    fn evaluate_disable_on_success_exit_nonzero_returns_false() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_exit_nonzero_returns_false() {
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1509,13 +1537,15 @@ command = "echo"
             disable_on_success_timeout_secs: Some(5),
             disable_on_success_working_dir: None,
         };
-        assert!(!evaluate_disable_on_success(&job));
+        assert!(!evaluate_disable_on_success(&job).await);
     }
 
-    #[test]
-    fn evaluate_disable_on_success_match_present_returns_true() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_match_present_returns_true() {
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1528,13 +1558,15 @@ command = "echo"
             disable_on_success_timeout_secs: Some(5),
             disable_on_success_working_dir: None,
         };
-        assert!(evaluate_disable_on_success(&job));
+        assert!(evaluate_disable_on_success(&job).await);
     }
 
-    #[test]
-    fn evaluate_disable_on_success_match_absent_returns_false() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_match_absent_returns_false() {
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1547,13 +1579,15 @@ command = "echo"
             disable_on_success_timeout_secs: Some(5),
             disable_on_success_working_dir: None,
         };
-        assert!(!evaluate_disable_on_success(&job));
+        assert!(!evaluate_disable_on_success(&job).await);
     }
 
-    #[test]
-    fn evaluate_disable_on_success_timeout_returns_false() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_timeout_returns_false() {
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1566,14 +1600,16 @@ command = "echo"
             disable_on_success_timeout_secs: Some(1),
             disable_on_success_working_dir: None,
         };
-        assert!(!evaluate_disable_on_success(&job));
+        assert!(!evaluate_disable_on_success(&job).await);
     }
 
-    #[test]
-    fn evaluate_disable_on_success_working_dir() {
+    #[tokio::test]
+    async fn evaluate_disable_on_success_working_dir() {
         let dir = tempfile::tempdir().unwrap();
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: None,
             schedule: "* * * * *".into(),
             channel: "ch".into(),
             message: "msg".into(),
@@ -1586,15 +1622,15 @@ command = "echo"
             disable_on_success_timeout_secs: Some(5),
             disable_on_success_working_dir: Some(dir.path().to_str().unwrap().into()),
         };
-        assert!(evaluate_disable_on_success(&job));
+        assert!(evaluate_disable_on_success(&job).await);
     }
 
     #[test]
     fn disable_job_in_usercron_sets_enabled_false() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cronjob.toml");
-        let content = r#"
-[[jobs]]
+        let content = r#"[[jobs]]
+id = "test-goal"
 schedule = "*/10 * * * *"
 channel = "123"
 message = "test goal"
@@ -1604,7 +1640,9 @@ disable_on_success = "npm test"
         std::fs::write(&path, content).unwrap();
 
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: Some("test-goal".into()),
             schedule: "*/10 * * * *".into(),
             channel: "123".into(),
             message: "test goal".into(),
@@ -1621,23 +1659,22 @@ disable_on_success = "npm test"
         disable_job_in_usercron(&path, &job).unwrap();
 
         let updated = std::fs::read_to_string(&path).unwrap();
-        let parsed: toml::Value = toml::from_str(&updated).unwrap();
-        let jobs = parsed["jobs"].as_array().unwrap();
-        assert_eq!(jobs[0]["enabled"].as_bool(), Some(false));
+        assert!(updated.contains("enabled = false"));
     }
 
     #[test]
     fn disable_job_in_usercron_preserves_other_jobs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cronjob.toml");
-        let content = r#"
-[[jobs]]
+        let content = r#"[[jobs]]
+id = "daily-report"
 schedule = "0 9 * * *"
 channel = "456"
 message = "daily report"
 platform = "discord"
 
 [[jobs]]
+id = "test-goal"
 schedule = "*/10 * * * *"
 channel = "123"
 message = "test goal"
@@ -1647,7 +1684,9 @@ disable_on_success = "npm test"
         std::fs::write(&path, content).unwrap();
 
         let job = CronJobConfig {
+            id: None,
             enabled: true,
+            id: Some("test-goal".into()),
             schedule: "*/10 * * * *".into(),
             channel: "123".into(),
             message: "test goal".into(),
@@ -1664,18 +1703,63 @@ disable_on_success = "npm test"
         disable_job_in_usercron(&path, &job).unwrap();
 
         let updated = std::fs::read_to_string(&path).unwrap();
-        let parsed: toml::Value = toml::from_str(&updated).unwrap();
-        let jobs = parsed["jobs"].as_array().unwrap();
-        // First job should be unchanged
-        assert!(jobs[0].get("enabled").is_none() || jobs[0]["enabled"].as_bool() == Some(true));
-        // Second job should be disabled
-        assert_eq!(jobs[1]["enabled"].as_bool(), Some(false));
+        // Only the second job should have enabled = false
+        let lines: Vec<&str> = updated.lines().collect();
+        let enabled_lines: Vec<&&str> = lines
+            .iter()
+            .filter(|l| l.contains("enabled = false"))
+            .collect();
+        assert_eq!(enabled_lines.len(), 1);
+        // First job should not have enabled = false
+        let first_job_end = updated.find("[[jobs]]\nid = \"test-goal\"").unwrap();
+        assert!(!updated[..first_job_end].contains("enabled = false"));
+    }
+
+    #[test]
+    fn disable_job_in_usercron_preserves_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cronjob.toml");
+        let content = r#"# My usercron config
+[[jobs]]
+id = "test-goal"
+schedule = "*/10 * * * *"
+channel = "123"
+message = "test goal"  # important goal
+platform = "discord"
+disable_on_success = "npm test"
+"#;
+        std::fs::write(&path, content).unwrap();
+
+        let job = CronJobConfig {
+            id: None,
+            enabled: true,
+            id: Some("test-goal".into()),
+            schedule: "*/10 * * * *".into(),
+            channel: "123".into(),
+            message: "test goal".into(),
+            platform: "discord".into(),
+            sender_name: "openab-cron".into(),
+            thread_id: None,
+            timezone: "UTC".into(),
+            disable_on_success: Some("npm test".into()),
+            disable_on_success_match: None,
+            disable_on_success_timeout_secs: None,
+            disable_on_success_working_dir: None,
+        };
+
+        disable_job_in_usercron(&path, &job).unwrap();
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert!(updated.contains("# My usercron config"));
+        assert!(updated.contains("# important goal"));
+        assert!(updated.contains("enabled = false"));
     }
 
     #[test]
     fn cronjob_config_parses_disable_on_success_fields() {
         let toml_str = r#"
 [[jobs]]
+id = "my-goal"
 schedule = "*/10 * * * *"
 channel = "123"
 message = "goal"
@@ -1686,6 +1770,7 @@ disable_on_success_working_dir = "/repo"
 "#;
         let parsed: UsercronFile = toml::from_str(toml_str).unwrap();
         let job = &parsed.jobs[0];
+        assert_eq!(job.id.as_deref(), Some("my-goal"));
         assert_eq!(job.disable_on_success.as_deref(), Some("npm test"));
         assert_eq!(job.disable_on_success_match.as_deref(), Some("SUCCESS"));
         assert_eq!(job.disable_on_success_timeout_secs, Some(30));
