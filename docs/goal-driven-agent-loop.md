@@ -277,7 +277,7 @@ Persisted state per goal:
 }
 ```
 
-MVP storage: local JSON file (`goals-state.json`). Future: DB or object store.
+MVP storage: **local JSON state file** (`goals-state.json`) — loaded on startup, written after each round. This is a hard requirement, not optional. Future: DB or object store.
 
 ## Escalation Recovery Rules
 
@@ -292,15 +292,30 @@ When the human responds to an escalation:
 
 Key principle: **`max_rounds` never resets** unless the goal itself is redefined (option 3). This prevents infinite loops even with repeated escalations.
 
+## Thread Lifecycle (MVP)
+
+Each goal **must** run in a single, persistent thread to preserve agent context across rounds.
+
+| Scenario | Behavior |
+|----------|----------|
+| `thread_id` provided | Use that thread for all rounds |
+| `thread_id` empty | Auto-create a dedicated thread on first round; persist `thread_id` in goal state |
+
+Rules:
+- All round messages, agent discussions, and escalations happen in the **same thread**
+- Thread is never re-created between rounds
+- Thread title updated with status: `🔐 Goal: <description> [Round N/max]`
+
+This ensures agents always have full conversation history as context.
+
 ## Open Questions
 
-1. **Thread vs channel** — Should each goal auto-create a dedicated thread, or reuse an existing one?
-2. **Multi-agent coordination** — In escape room mode, how do agents avoid conflicting actions? First-come-first-serve? Or coordinator (超渡) assigns sub-tasks?
-3. **Goal lifecycle commands** — How does the human create/pause/cancel goals? Slash commands? Config file reload?
-4. **Observability** — How to surface goal progress history (rounds, deltas, escalations)?
-5. **Context window overflow** — Long-running goals accumulate thread history. Should each round message include a condensed summary of prior rounds to prevent context overflow? Or implement a sliding window / summarization step?
+1. **Multi-agent coordination** — In escape room mode, how do agents avoid conflicting actions? First-come-first-serve? Or coordinator (超渡) assigns sub-tasks?
+2. **Goal lifecycle commands** — How does the human create/pause/cancel goals? Slash commands? Config file reload?
+3. **Observability** — How to surface goal progress history (rounds, deltas, escalations)?
+4. **Context window overflow** — Long-running goals accumulate thread history. Should each round message include a condensed summary of prior rounds to prevent context overflow? Or implement a sliding window / summarization step?
 
 ## References
 
 - [Existing CronJob docs](./cronjob.md)
-- [Discord thread for this design discussion](https://discord.com/channels/1491295927620169908/1504239931940409587)
+- [Discord thread for this design discussion](https://discord.com/channels/1491295327620169908/1504239931940409587)
