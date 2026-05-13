@@ -179,7 +179,7 @@ The path is relative to `$HOME/.openab/` (e.g. `"cronjob.toml"` resolves to `$HO
 > **New installations**: If `~/.openab/` does not exist yet, the scheduler silently skips the file and continues running. Once you create the directory and place `cronjob.toml` inside, it will be picked up automatically on the next tick — no restart required.
 
 > [!CAUTION]
-> **Breaking Change** — `usercron_path` relative path base changed from `$HOME` to `$HOME/.openab/`.
+> **Breaking Change (v0.8.2)** — `usercron_path` relative path base changed from `$HOME` to `$HOME/.openab/`.
 > If you are upgrading from a previous version, move your existing file:
 > ```bash
 > mkdir -p ~/.openab
