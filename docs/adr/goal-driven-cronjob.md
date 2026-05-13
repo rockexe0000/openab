@@ -14,9 +14,10 @@ As an OpenAB operator, I want to define a **goal** that agents must achieve, whe
 As a team lead, I want agents to self-organize ("escape room" mode) — I tell them the goal, not the steps.
 
 Requirements:
-- Extend existing usercron `[[jobs]]` with a `disable_on_success` field
+- Extend existing usercron `[[jobs]]` with `disable_on_success` fields
 - Before sending the scheduled message, run the specified command
-- If command exits 0 (and stdout contains `disable_on_success_match` if set) → goal achieved, post `✅ Goal achieved` to thread, auto-disable the job, do NOT send the regular failure message
+- If command exits 0 and prints the configured `disable_on_success_match` string to stdout/stderr → goal achieved, post `✅ Goal achieved` to thread, auto-disable the job, do NOT send the regular failure message
+- If command exits 0 without the required match string → goal not met, send message as normal
 - If command exits non-zero → goal not met, send message as normal (agents continue working)
 - Auto-disable state must persist across restarts
 - Human can re-enable a completed goal by setting `enabled = true`
@@ -65,8 +66,8 @@ schedule = "*/10 * * * *"
 channel = "123456789012345678"
 thread_id = ""                                    # auto-created on first fire if empty
 message = "Goal not met: all unit tests must pass. Please continue working."
-disable_on_success = "npm test"                   # command to evaluate goal
-disable_on_success_match = "SUCCESS"              # optional: stdout must contain this string
+disable_on_success = "npm test && echo GOAL_ACHIEVED"  # command to evaluate goal
+disable_on_success_match = "GOAL_ACHIEVED"             # required marker in command output
 disable_on_success_timeout_secs = 60              # command timeout
 disable_on_success_working_dir = "/repo"          # working directory
 enabled = true                                    # scheduler sets to false on success
@@ -77,8 +78,8 @@ enabled = true                                    # scheduler sets to false on s
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `id` | ✅ (when `disable_on_success` set) | — | Stable unique identifier for state persistence. Missing `id` on a job with `disable_on_success` is a **startup error**. |
-| `disable_on_success` | | — | Shell command; exit 0 + match = goal achieved, auto-disable |
-| `disable_on_success_match` | | — | If set, stdout must contain this string (in addition to exit 0) for goal to be considered achieved |
+| `disable_on_success` | | — | Shell command that evaluates the goal |
+| `disable_on_success_match` | ✅ (when `disable_on_success` set) | — | Required marker string that must appear in command stdout/stderr, in addition to exit 0, before the goal is considered achieved |
 | `disable_on_success_timeout_secs` | | `60` | Max seconds before command is killed |
 | `disable_on_success_working_dir` | | — | Working directory for command execution |
 
@@ -97,27 +98,15 @@ CronJob schedule fires
   Skip    Run disable_on_success command
   (done)       │
           ┌────┴────┐
-          │ exit 0? │
+          │ exit 0  │
+          │ + marker? │
           └────┬────┘
           Yes  │  No / Timeout
            │   │    │
            ▼   │    ▼
-     match set?     Send message
-      │    │        to channel/thread
-     Yes   No       (agents keep working)
-      │    │
-      ▼    ▼
-  stdout   Post ✅,
-  contains set enabled
-  match?   = false
-      │
-  ┌───┴───┐
- Yes      No
-  │        │
-  ▼        ▼
-Post ✅,  Send message
-set enabled (goal not confirmed)
-= false
+     Post ✅,       Send message
+     set enabled    to channel/thread
+     = false        (agents keep working)
 ```
 
 ### State Persistence
@@ -126,7 +115,7 @@ No separate state file needed. When goal is achieved, the **OpenAB scheduler** w
 
 | Event | Action |
 |-------|--------|
-| Goal achieved (exit 0) | Scheduler posts `✅ Goal achieved: <description>` to thread, then sets `enabled = false` in usercron file |
+| Goal achieved (exit 0 + marker) | Scheduler posts `✅ Goal achieved: <description>` to thread, then sets `enabled = false` in usercron file |
 | Human re-enables | Human sets `enabled = true` in usercron file |
 | Thread auto-created | Scheduler writes `thread_id` back to usercron file |
 
@@ -153,6 +142,7 @@ All messages go to the **same thread** — agents need conversation history as c
 | Concern | Mitigation |
 |---------|-----------|
 | Arbitrary shell execution | Trust config source (same as existing cron). Only maintainers edit config. |
+| False-positive success | Require both exit 0 and an explicit `disable_on_success_match` in command stdout/stderr |
 | Runaway commands | `disable_on_success_timeout_secs` kills long-running processes |
 | Command injection | Config is static TOML, not user-input at runtime |
 
@@ -167,9 +157,10 @@ Future phases may add container isolation or command whitelists.
 1. Parse new fields from usercron `[[jobs]]` (`$HOME/.openab/cronjob.toml`)
 2. On cron fire, if `disable_on_success` is set:
    - Check `enabled` — if false, skip
+   - Validate `id` and `disable_on_success_match` are present
    - Execute command with `disable_on_success_timeout_secs` and `disable_on_success_working_dir`
-   - exit 0 → scheduler posts `✅ Goal achieved` to thread, writes `enabled = false` to usercron file
-   - exit != 0 / timeout exceeded → send message as normal
+   - exit 0 and stdout/stderr contains `disable_on_success_match` → scheduler posts `✅ Goal achieved` to thread, writes `enabled = false` to usercron file
+   - exit != 0 / timeout exceeded / marker missing → send message as normal
 3. Thread auto-creation: if `thread_id` empty, create thread on first fire, scheduler writes back to usercron file
 4. No separate state file — usercron IS the state
 
@@ -192,9 +183,9 @@ Phase 1 usercron `[[jobs]]` entries with `disable_on_success` remain valid and c
 ### Happy Path
 
 1. Repo has one failing test
-2. Cron fires every 10 min with `disable_on_success = "npm test"`
+2. Cron fires every 10 min with `disable_on_success = "npm test && echo GOAL_ACHIEVED"` and `disable_on_success_match = "GOAL_ACHIEVED"`
 3. `npm test` fails → message sent → agents discuss and fix
-4. Next fire → `npm test` passes → scheduler posts `✅ Goal achieved`, sets `enabled = false`
+4. Next fire → `npm test` passes and output contains `GOAL_ACHIEVED` → scheduler posts `✅ Goal achieved`, sets `enabled = false`
 
 ### Restart Resilience
 
@@ -213,6 +204,11 @@ Phase 1 usercron `[[jobs]]` entries with `disable_on_success` remain valid and c
 1. `disable_on_success` command hangs
 2. After `disable_on_success_timeout_secs` → killed
 3. Treated as failure → message sent
+
+### Missing Marker
+
+1. `disable_on_success` exits 0 but does not print `disable_on_success_match`
+2. Treated as failure → regular message sent
 
 ---
 
