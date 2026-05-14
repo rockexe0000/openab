@@ -115,6 +115,24 @@ platform = "slack"
 sender_name = "OpsBot"
 ```
 
+### Concise PR Screening Prompt
+
+Cron job messages are posted into the target chat before the agent runs. Keep operational prompts below the platform message limit, especially Discord's 2,000 character limit.
+
+For OpenAB project screening, use a compact trigger prompt like:
+
+```text
+Run OpenAB PR screening once. Use gh only; GH_TOKEN is auth, never gh auth login.
+
+Project: openabdev project 1. Queue: first item in Status=Incoming; if none, first open PR in openabdev/openab with label pending-screening. If no work, reply: no PR-screening work found.
+
+For one item: fetch title, number, URL, body, author, labels, files/checks when relevant. Post/update a GitHub comment marked <!-- openab-project-screening -->. If it came from the project board, move Incoming -> PR-Screening. If it came only from pending-screening, leave board status unless a matching project item exists.
+
+Report sections: Intent, Feat/Fix, Who it serves, Risks, Best-practice comparison if relevant, Options, Recommendation. Be concise and useful to a maintainer.
+
+End the comment with: Agent-ran OpenAB PR screening. Feedback welcome; react thumbs-up if useful.
+```
+
 ## Helm Deployment
 
 When using the Helm chart, define cronjobs under each agent in `values.yaml`:
