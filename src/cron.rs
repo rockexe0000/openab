@@ -480,35 +480,36 @@ pub async fn run_scheduler(
 
                     // Check disable_on_success before firing (usercron jobs only)
                     let is_usercron = idx >= baseline_len;
-                    if is_usercron && job.config.disable_on_success.is_some() {
-                        if evaluate_disable_on_success(&job.config).await {
-                            info!(
-                                schedule = %job.config.schedule,
-                                channel = %job.config.channel,
-                                "✅ disable_on_success: goal achieved, disabling job"
-                            );
-                            // Write enabled=false back to usercron file
-                            if let Some(ref path) = usercron_path {
-                                if let Err(e) = disable_job_in_usercron(path, &job.config) {
-                                    error!(error = %e, "failed to disable job in usercron file");
-                                }
+                    if is_usercron
+                        && job.config.disable_on_success.is_some()
+                        && evaluate_disable_on_success(&job.config).await
+                    {
+                        info!(
+                            schedule = %job.config.schedule,
+                            channel = %job.config.channel,
+                            "✅ disable_on_success: goal achieved, disabling job"
+                        );
+                        // Write enabled=false back to usercron file
+                        if let Some(ref path) = usercron_path {
+                            if let Err(e) = disable_job_in_usercron(path, &job.config) {
+                                error!(error = %e, "failed to disable job in usercron file");
                             }
-                            // Post success notification to channel
-                            if let Some(adapter) = adapters.get(&job.config.platform) {
-                                let channel = ChannelRef {
-                                    platform: job.config.platform.clone(),
-                                    channel_id: job.config.channel.clone(),
-                                    thread_id: job.config.thread_id.clone(),
-                                    parent_id: None,
-                                    origin_event_id: None,
-                                };
-                                let msg = format!("✅ Goal achieved: {}", job.config.message);
-                                let _ = adapter.send_message(&channel, &msg).await;
-                            }
-                            // Trigger hot-reload on next tick
-                            last_usercron_mtime = None;
-                            continue;
                         }
+                        // Post success notification to channel
+                        if let Some(adapter) = adapters.get(&job.config.platform) {
+                            let channel = ChannelRef {
+                                platform: job.config.platform.clone(),
+                                channel_id: job.config.channel.clone(),
+                                thread_id: job.config.thread_id.clone(),
+                                parent_id: None,
+                                origin_event_id: None,
+                            };
+                            let msg = format!("✅ Goal achieved: {}", job.config.message);
+                            let _ = adapter.send_message(&channel, &msg).await;
+                        }
+                        // Trigger hot-reload on next tick
+                        last_usercron_mtime = None;
+                        continue;
                     }
 
                     info!(
