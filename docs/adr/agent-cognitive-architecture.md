@@ -1,10 +1,10 @@
-# ADR-001: Agent Cognitive Architecture Specification (ACAS)
+# ADR: Agent Cognitive Architecture Specification (ACAS)
 
 - **Status**: Proposed
-- **Spec Version**: 1.4.0 (Draft phase numbering; may reset to 1.0.0 upon acceptance)
+- **Spec Version**: 1.0.0
 - **Date**: 2026-04-23
 - **Author**: pahud.hsieh (drafted by chaodu-agent)
-- **Revision**: Incorporates review feedback from 周嘟嘟, 小喬, 諸葛亮, 張飛, shaun-agent screening, and Discord live review session. v1.3.0: Added Entry Point Discovery (§1.3 Step 0) and Entry Point Convention (§1.5). v1.4.0: Addressed filesystem isolation constraints — URL support in §1.5, isolated environment guidance in §2.2, shared knowledge limitations in §3.1.
+- **Revision**: Incorporates review feedback from AI agent reviewers (chaodu-agent 法師團隊), shaun-agent screening, and Discord live review session. Includes Entry Point Discovery (§1.3 Step 0), Entry Point Convention (§1.5), and filesystem isolation constraints (§2.2, §3.1).
 
 ## Key Words
 
@@ -53,7 +53,7 @@ Every agent MUST maintain a self-identity definition that answers: **"Who am I?"
 ### Required vs Optional Identity Fields
 
 ```yaml
-spec_version: "1.4.0"           # REQUIRED — spec version this identity conforms to
+spec_version: "1.0.0"           # REQUIRED — spec version this identity conforms to
 identity:
   name: ""                       # REQUIRED — agent's name (how it refers to itself)
   uid: ""                        # REQUIRED — unique identifier (platform-specific, e.g. Discord UID)
