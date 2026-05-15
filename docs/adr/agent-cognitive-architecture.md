@@ -116,7 +116,7 @@ An ACAS-conformant deployment MUST ensure that the agent's entry file contains a
 
 This agent follows the Agent Cognitive Architecture Specification (ACAS).
 
-- Spec: https://github.com/openabdev/openab/blob/main/docs/adr/ADR-001-agent-cognitive-architecture.md
+- Spec: https://github.com/openabdev/openab/blob/main/docs/adr/agent-cognitive-architecture.md
 - Identity: identity.yaml
 - Peers: peers.yaml
 - Knowledge DB: memory.db
