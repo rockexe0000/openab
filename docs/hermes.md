@@ -45,6 +45,41 @@ kubectl exec -it <pod> -- hermes auth add nous         # Nous Portal
 kubectl exec -it <pod> -- hermes model                 # Interactive provider picker
 ```
 
+### xAI Grok OAuth (Recommended)
+
+xAI Grok OAuth uses a loopback redirect flow — the callback listener binds `127.0.0.1:56121` inside the pod. You need a port-forward so your browser's redirect reaches the pod:
+
+```bash
+# Terminal 1: port-forward
+kubectl port-forward deployment/<your-deployment> 56121:56121
+
+# Terminal 2: run auth
+kubectl exec -it deployment/<your-deployment> -- hermes auth add xai-oauth --no-browser
+```
+
+1. Copy the printed authorize URL → open in your local browser
+2. Approve access on accounts.x.ai
+3. Browser redirects to `127.0.0.1:56121/callback` → port-forward delivers it to the pod
+4. Terminal shows "Login successful!"
+
+After auth, set the default model:
+
+```bash
+kubectl exec <pod> -- hermes config set model.provider xai-oauth
+kubectl exec <pod> -- hermes config set model.default grok-4.3
+```
+
+> **Note:** You need an active [SuperGrok subscription](https://x.ai/grok) ($30/mo). Auth will succeed without one, but the API returns empty responses.
+
+### Providers That Don't Need Port-Forward
+
+| Provider | Auth Method |
+|----------|-------------|
+| Anthropic (Claude Pro/Max) | Paste-the-code flow |
+| OpenAI Codex (ChatGPT Plus/Pro) | Device code flow |
+| MiniMax, Nous Portal | Device code flow |
+| xAI Grok, Spotify | Loopback OAuth (port-forward required) |
+
 ### Supported Providers (via OAuth)
 
 | Provider | Auth Command | Cost Model |
