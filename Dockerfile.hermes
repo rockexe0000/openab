@@ -25,6 +25,7 @@ RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HE
       -o /tmp/install-hermes.sh && \
     echo "${HERMES_INSTALL_SHA256}  /tmp/install-hermes.sh" | sha256sum -c - && \
     HERMES_HOME=/home/agent/.hermes bash /tmp/install-hermes.sh && \
+    ln -sf /usr/local/lib/hermes-agent/venv/bin/hermes-acp /usr/local/bin/hermes-acp && \
     rm /tmp/install-hermes.sh
 
 # Install gh CLI
