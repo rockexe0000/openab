@@ -8,7 +8,7 @@
 >
 > and it will guide you through the full setup.
 
-Send GitHub Actions CI results (pass/fail) to a Discord channel or thread via webhook, with clickable links, duration, and bot mentions.
+Send GitHub Actions CI results (pass/fail) to a Discord channel or thread via webhook, with clickable links, duration, and user mentions.
 
 ## Problem
 
@@ -32,7 +32,7 @@ When CI runs in GitHub Actions, the only way to know the result is to check the 
 
 ## Solution
 
-A **reusable workflow** (`notify-discord.yml`) that any CI workflow calls as its final job. It posts a Discord embed with clickable title, colored sidebar, and bot mention — routing to the correct thread based on the PR description.
+A **reusable workflow** (`notify-discord.yml`) that any CI workflow calls as its final job. It posts a Discord embed with clickable title, colored sidebar, and user mention — routing to the correct thread based on the PR description.
 
 ## Architecture
 
@@ -70,7 +70,7 @@ A **reusable workflow** (`notify-discord.yml`) that any CI workflow calls as its
 |  │ ⏱️ 3m42s                                        │     |
 |  │ View Run                          ← clickable   │     |
 |  └─────────────────────────────────────────────────┘     |
-|  @bot-mention                                            |
+|  @user-mention                                            |
 |                                                          |
 +----------------------------------------------------------+
 ```
@@ -98,7 +98,7 @@ Server Settings → Integrations → Webhooks → New Webhook → Copy URL.
 |------|------|-------|
 | **Secret** | `DISCORD_WEBHOOK_URL` | The webhook URL (contains token — keep secret) |
 | **Variable** | `DISCORD_THREAD_ID` | Default thread ID for fallback notifications |
-| **Variable** | `DISCORD_MENTION_USER_ID` | Discord user/bot ID to mention (e.g. `1234567890`) |
+| **Variable** | `DISCORD_MENTION_USER_ID` | Discord user ID to mention (e.g. `1234567890`) |
 
 Set via CLI:
 
