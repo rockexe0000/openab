@@ -19,6 +19,15 @@ When CI runs in GitHub Actions, the only way to know the result is to check the 
 - **Context switching** — developers must leave Discord to check CI status
 - **No accountability** — nobody gets pinged when CI breaks
 
+## What We Want
+
+- CI finishes (pass or fail) → automatically POST result to a specific Discord channel/thread
+- Commit message is a **clickable link** pointing to the PR or commit
+- Show who committed, how long CI took, and which step failed
+- Mention a specific user so they get pinged
+- Route notifications to the correct thread based on the PR description
+- One reusable workflow that any CI job can call
+
 ## Challenges
 
 | Challenge | Why it's hard |
