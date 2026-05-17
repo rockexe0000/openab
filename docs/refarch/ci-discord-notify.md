@@ -79,6 +79,16 @@ GitHub Actions ──finish──► HTTP POST ──► Discord thread
 
 ### When to Use Which
 
+| | Polling (Cronjob) | Notification (Webhook) |
+|---|---|---|
+| **Scope** | Everything on your plate — all workflows, branches, repos | Single CI run only |
+| **Latency** | Up to N minutes | Instant (on completion) |
+| **Auto-fix** | ✅ Agent can push fixes | ❌ Notification only |
+| **Setup** | Just tell the bot | Webhook + secrets + workflow changes |
+| **Cost** | Burns compute even when idle | Zero cost when nothing runs |
+| **Metadata** | Whatever the agent can scrape | Precise: duration, failed step, commit SHA |
+| **Best for** | "Keep my CI green across all repos" | "Tell me the moment this PR breaks" |
+
 | Scenario | Recommended |
 |----------|-------------|
 | "Tell me when CI breaks" | Notification mode (this doc) |
