@@ -39,6 +39,54 @@ When CI runs in GitHub Actions, the only way to know the result is to check the 
 | Don't repeat yourself | Multiple CI workflows need the same notification logic — need reusable workflow |
 | Keep secrets safe | Webhook URL contains a token — must never appear in workflow files or logs |
 
+## Two Approaches
+
+### Approach 1: Polling Mode (Cronjob)
+
+OpenAB has a built-in cron scheduler. You can schedule the agent to periodically check CI status and fix failures:
+
+```
+@bot can you schedule a cronjob for yourself to this thread and remind yourself to
+"check https://github.com/owner/repo/actions and fix them if required" every 10min?
+```
+
+This creates a `[[cron.jobs]]` entry:
+
+```toml
+[[cron.jobs]]
+schedule = "*/10 * * * *"
+channel = "123456789012345678"
+thread_id = "1505664791719710810"
+message = "check https://github.com/owner/repo/actions and fix them if required"
+```
+
+**Pros:** Simple setup, agent can auto-fix issues, no webhook configuration needed.
+
+**Cons:** Up to 10min delay, unnecessary API calls when nothing changed, burns compute on polling.
+
+### Approach 2: Notification Mode (Webhook Push) ← This Doc
+
+CI pushes results to Discord the moment it finishes — zero delay, zero wasted calls.
+
+```
+GitHub Actions ──finish──► HTTP POST ──► Discord thread
+                              (webhook)
+```
+
+**Pros:** Instant notification, no polling cost, precise metadata (duration, failed step, commit info).
+
+**Cons:** Requires webhook setup, can't auto-fix (notification only).
+
+### When to Use Which
+
+| Scenario | Recommended |
+|----------|-------------|
+| "Tell me when CI breaks" | Notification mode (this doc) |
+| "Check CI and fix it automatically" | Polling mode (cronjob) |
+| Both — notify immediately + auto-fix | Combine: webhook notifies, cronjob retries fixes |
+
+---
+
 ## Solution
 
 A **reusable workflow** (`notify-discord.yml`) that any CI workflow calls as its final job. It posts a Discord embed with clickable title, colored sidebar, and user mention — routing to the correct thread based on the PR description.
