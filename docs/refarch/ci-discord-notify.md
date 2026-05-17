@@ -60,22 +60,22 @@ thread_id = "1505664791719710810"
 message = "check https://github.com/owner/repo/actions and fix them if required"
 ```
 
-**Pros:** Simple setup, agent can auto-fix issues, no webhook configuration needed.
+**Pros:** Holistic view — checks everything on your plate (all workflows, all branches, all repos). Agent can auto-fix issues. No webhook configuration needed.
 
-**Cons:** Up to 10min delay, unnecessary API calls when nothing changed, burns compute on polling.
+**Cons:** Up to N-minute delay, unnecessary API calls when nothing changed, burns compute on polling.
 
 ### Approach 2: Notification Mode (Webhook Push) ← This Doc
 
-CI pushes results to Discord the moment it finishes — zero delay, zero wasted calls.
+CI pushes results to Discord the moment it finishes — zero delay, zero wasted calls. But it only tells you about **this single CI run**.
 
 ```
 GitHub Actions ──finish──► HTTP POST ──► Discord thread
                               (webhook)
 ```
 
-**Pros:** Instant notification, no polling cost, precise metadata (duration, failed step, commit info).
+**Pros:** Instant notification, no polling cost, precise metadata (duration, failed step, commit info) for the specific run.
 
-**Cons:** Requires webhook setup, can't auto-fix (notification only).
+**Cons:** Narrow scope — only reports on the workflow that triggered it. Can't see the big picture. Can't auto-fix (notification only). Requires webhook setup.
 
 ### When to Use Which
 
