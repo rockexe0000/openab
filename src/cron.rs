@@ -447,6 +447,9 @@ pub async fn run_scheduler(
     );
 
     let in_flight: Arc<Mutex<HashSet<usize>>> = Arc::new(Mutex::new(HashSet::new()));
+    // Serialize usercron read-modify-write updates so concurrent jobs do not
+    // overwrite each other's enabled/thread_id changes.
+    let usercron_write_lock: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
 
     // Align to next minute boundary
     let now = Utc::now();
@@ -512,9 +515,18 @@ pub async fn run_scheduler(
                     let router = router.clone();
                     let adapters = adapters.clone();
                     let in_flight = in_flight.clone();
+                    let usercron_write_lock = usercron_write_lock.clone();
                     tasks.spawn(async move {
-                        fire_cronjob(idx, &config, usercron_path, &router, &adapters, in_flight)
-                            .await;
+                        fire_cronjob(
+                            idx,
+                            &config,
+                            usercron_path,
+                            &router,
+                            &adapters,
+                            in_flight,
+                            usercron_write_lock,
+                        )
+                        .await;
                     });
                 }
                 while tasks.try_join_next().is_some() {}
@@ -554,6 +566,7 @@ async fn fire_cronjob(
     router: &Arc<AdapterRouter>,
     adapters: &HashMap<String, Arc<dyn ChatAdapter>>,
     in_flight: Arc<Mutex<HashSet<usize>>>,
+    usercron_write_lock: Arc<Mutex<()>>,
 ) {
     let _guard = InFlightGuard {
         idx,
@@ -605,6 +618,7 @@ async fn fire_cronjob(
                     if let (Some(path), Some(id)) =
                         (usercron_path.as_deref(), non_empty_opt(job.id.as_deref()))
                     {
+                        let _write_guard = usercron_write_lock.lock().await;
                         if let Err(e) = update_usercron_job(path, id, Some(false), None) {
                             error!(path = %path.display(), id, error = %e, "failed to disable completed usercron job");
                         }
@@ -660,6 +674,7 @@ async fn fire_cronjob(
                     non_empty_opt(job.id.as_deref()),
                     ch.thread_id.as_deref().or(Some(ch.channel_id.as_str())),
                 ) {
+                    let _write_guard = usercron_write_lock.lock().await;
                     if let Err(e) = update_usercron_job(path, id, None, Some(thread_id)) {
                         warn!(path = %path.display(), id, error = %e, "failed to persist usercron thread_id");
                     }
@@ -805,7 +820,7 @@ async fn check_disable_on_success(
                     );
                     stdout_task.abort();
                     stderr_task.abort();
-                    return DisableOnSuccessResult::NotAchieved("command failed to start");
+                    return DisableOnSuccessResult::NotAchieved("command wait failed");
                 }
             };
             if !status.success() {
