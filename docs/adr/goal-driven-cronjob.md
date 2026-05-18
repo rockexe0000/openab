@@ -79,7 +79,7 @@ enabled = true                                    # scheduler sets to false on s
 |-------|----------|---------|-------------|
 | `id` | ✅ (when `disable_on_success` set) | — | Stable unique identifier for state persistence. Missing `id` on a job with `disable_on_success` is a **startup error**. |
 | `disable_on_success` | | — | Shell command that evaluates the goal |
-| `disable_on_success_match` | ✅ (when `disable_on_success` set) | — | Required marker string that must appear in command stdout/stderr, in addition to exit 0, before the goal is considered achieved |
+| `disable_on_success_match` | ✅ (when `disable_on_success` set) | — | Required marker string that must appear as a **substring** in the combined stdout+stderr output (case-sensitive), in addition to exit 0, before the goal is considered achieved. Choose a unique marker (e.g. `GOAL_ACHIEVED`) that won't appear in normal command output to avoid false positives. |
 | `disable_on_success_timeout_secs` | | `60` | Max seconds before command is killed |
 | `disable_on_success_working_dir` | | — | Working directory for command execution |
 
@@ -97,16 +97,14 @@ CronJob schedule fires
     ▼          ▼
   Skip    Run disable_on_success command
   (done)       │
-          ┌────┴────┐
-          │ exit 0  │
-          │ + marker? │
-          └────┬────┘
-          Yes  │  No / Timeout
-           │   │    │
-           ▼   │    ▼
-     Post ✅,       Send message
-     set enabled    to channel/thread
-     = false        (agents keep working)
+          ┌────┴─────────────┐
+          │                  │
+     exit 0 + marker?    No / Timeout
+          │                  │
+          ▼                  ▼
+     Post ✅,           Send message
+     set enabled        to channel/thread
+     = false            (agents keep working)
 ```
 
 ### State Persistence
@@ -154,10 +152,9 @@ Future phases may add container isolation or command whitelists.
 
 ### Phase 1 (This ADR)
 
-1. Parse new fields from usercron `[[jobs]]` (`$HOME/.openab/cronjob.toml`)
+1. Parse new fields from usercron `[[jobs]]` (`$HOME/.openab/cronjob.toml`). Validate at load time: any job with `disable_on_success` set MUST have `id` and `disable_on_success_match` — reject with a startup error if missing.
 2. On cron fire, if `disable_on_success` is set:
    - Check `enabled` — if false, skip
-   - Validate `id` and `disable_on_success_match` are present
    - Execute command with `disable_on_success_timeout_secs` and `disable_on_success_working_dir`
    - exit 0 and stdout/stderr contains `disable_on_success_match` → scheduler posts `✅ Goal achieved` to thread, writes `enabled = false` to usercron file
    - exit != 0 / timeout exceeded / marker missing → send message as normal
