@@ -8,26 +8,27 @@ Deploy OpenAB on K3s with the Custom Gateway receiving Telegram webhooks through
 Telegram Cloud
     │ HTTPS POST
     ▼
-Cloudflare Edge (bot.example.com)
-    │ Tunnel
+Cloudflare Edge (your_custom.domain.com)
+    │ Tunnel (QUIC)
     ▼
-┌─────────────────────────────────────────┐
-│  Gateway Pod                            │
-│  ┌───────────────┐  ┌────────────────┐  │
-│  │ cloudflared   │──│ gateway :8080  │  │
-│  │ (sidecar)     │  │                │  │
-│  └───────────────┘  └───────▲────────┘  │
-└─────────────────────────────│───────────┘
-                              │ WebSocket (cluster-internal)
-                    ┌─────────┴─────────┐
-                    │     OAB Pod       │
-                    └───────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Single Pod                                          │
+│                                                      │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │ cloudflared │─▶│ gateway :8080│◀─│    OAB     │  │
+│  │ (sidecar)   │  │ (sidecar)    │ws│ (main)     │  │
+│  └─────────────┘  └──────────────┘  └────────────┘  │
+│       localhost         localhost                     │
+└──────────────────────────────────────────────────────┘
 ```
 
-- **Telegram** sends webhook POSTs to the Cloudflare edge hostname.
-- **Cloudflare Tunnel** routes traffic to the `cloudflared` sidecar inside the cluster.
-- **Custom Gateway** receives the POST, normalizes it, and forwards to OAB over WebSocket.
-- **OAB** connects outbound to the gateway — no inbound ports needed.
+All three components run as containers in the **same pod**:
+
+- **cloudflared** — tunnel client, forwards Cloudflare traffic to `localhost:8080`
+- **gateway** — receives Telegram webhooks, normalizes events, serves WebSocket on `:8080`
+- **OAB** — connects to `ws://localhost:8080/ws`, runs the agent
+
+This keeps all communication on `localhost` — no K8s Services or cross-pod networking required.
 
 ## Prerequisites
 
@@ -59,21 +60,24 @@ RELEASE_NAME="my-openab"
 helm upgrade --install "$RELEASE_NAME" ./charts/openab \
   --set agents.kiro.discord.enabled=false \
   --set agents.kiro.gateway.enabled=true \
-  --set agents.kiro.gateway.deploy=true \
-  --set agents.kiro.gateway.url="ws://${RELEASE_NAME}-kiro-gateway:8080/ws" \
+  --set agents.kiro.gateway.deploy=false \
+  --set agents.kiro.gateway.url="ws://localhost:8080/ws" \
   --set agents.kiro.gateway.platform=telegram \
-  --set agents.kiro.gateway.image="ghcr.io/openabdev/openab-gateway" \
-  --set agents.kiro.gateway.tag="0.4.0" \
-  --set-literal agents.kiro.gateway.telegram.botToken="<TELEGRAM_BOT_TOKEN>" \
-  --set agents.kiro.gateway.extraContainers[0].name=cloudflared \
-  --set agents.kiro.gateway.extraContainers[0].image="cloudflare/cloudflared:2024.12.2" \
-  --set agents.kiro.gateway.extraContainers[0].args[0]="tunnel" \
-  --set agents.kiro.gateway.extraContainers[0].args[1]="--no-autoupdate" \
-  --set agents.kiro.gateway.extraContainers[0].args[2]="run" \
-  --set-literal agents.kiro.gateway.extraContainers[0].env[0].name=TUNNEL_TOKEN \
-  --set-literal agents.kiro.gateway.extraContainers[0].env[0].value="<CLOUDFLARE_TUNNEL_TOKEN>" \
+  --set agents.kiro.extraContainers[0].name=gateway \
+  --set agents.kiro.extraContainers[0].image="ghcr.io/openabdev/openab-gateway:0.4.0" \
+  --set agents.kiro.extraContainers[0].env[0].name=TELEGRAM_BOT_TOKEN \
+  --set-literal agents.kiro.extraContainers[0].env[0].value="<TELEGRAM_BOT_TOKEN>" \
+  --set agents.kiro.extraContainers[1].name=cloudflared \
+  --set agents.kiro.extraContainers[1].image="cloudflare/cloudflared:latest" \
+  --set agents.kiro.extraContainers[1].args[0]="tunnel" \
+  --set agents.kiro.extraContainers[1].args[1]="--no-autoupdate" \
+  --set agents.kiro.extraContainers[1].args[2]="run" \
+  --set agents.kiro.extraContainers[1].args[3]="--token" \
+  --set-literal agents.kiro.extraContainers[1].args[4]="<CLOUDFLARE_TUNNEL_TOKEN>" \
   --namespace openab --create-namespace
 ```
+
+> **Key difference:** `gateway.deploy=false` skips the separate gateway Deployment/Service. Instead, gateway and cloudflared run as `extraContainers` sidecars in the OAB pod, communicating over `localhost`.
 
 ## Step 3: Authenticate the Agent
 
@@ -91,7 +95,7 @@ kubectl rollout restart deployment/${RELEASE_NAME}-kiro -n openab
 
 ```bash
 curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
-  -d "url=https://bot.example.com/webhook/telegram"
+  -d "url=https://your_custom.domain.com/webhook/telegram"
 ```
 
 Verify:
@@ -105,11 +109,10 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 ```
 $ kubectl get pods -n openab
 NAME                                    READY   STATUS    AGE
-my-openab-kiro-xxxxx-yyyyy              1/1     Running   ...
-my-openab-kiro-gateway-xxxxx-yyyyy      2/2     Running   ...
+my-openab-kiro-xxxxx-yyyyy              3/3     Running   ...
 ```
 
-The gateway pod runs 2 containers: `gateway` and `cloudflared`.
+The single pod runs 3 containers: `kiro` (OAB agent), `gateway`, and `cloudflared`.
 
 ## Configuration
 
@@ -130,7 +133,9 @@ enabled = true
 remove_after_reply = false
 
 [gateway]
-url = "ws://my-openab-kiro-gateway:8080/ws"
+url = "ws://localhost:8080/ws"
+platform = "telegram"
+url = "ws://localhost:8080/ws"
 platform = "telegram"
 allow_all_channels = true
 allowed_channels = []
@@ -155,4 +160,4 @@ helm upgrade $RELEASE_NAME ./charts/openab \
 - **No public IP required** — the K3s node can be behind NAT or a firewall.
 - **No TLS management** — Cloudflare terminates TLS at the edge.
 - **No ingress controller config** — bypasses Traefik/nginx entirely.
-- **Sidecar pattern** — `cloudflared` runs alongside the gateway in the same pod, routing to `localhost:8080`.
+- **Single-pod simplicity** — all components share `localhost`, no cross-pod networking needed.
