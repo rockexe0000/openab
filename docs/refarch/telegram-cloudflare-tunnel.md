@@ -5,7 +5,7 @@ Deploy OpenAB with the Custom Gateway on a K3s cluster, exposing the Telegram we
 ## Architecture
 
 ```
-Telegram  ──POST──▶  Cloudflare Edge (your-domain.example.com)
+Telegram  ──POST──▶  Cloudflare Edge (your_custom.domain.com)
                           │
                      Tunnel (QUIC)
                           │
@@ -49,8 +49,7 @@ Telegram  ──POST──▶  Cloudflare Edge (your-domain.example.com)
 3. Name the tunnel (e.g. `openab-telegram`)
 4. Copy the tunnel token (starts with `eyJ...`)
 5. Add a **Public Hostname**:
-   - Subdomain: your chosen name (e.g. `emilie`)
-   - Domain: your Cloudflare domain (e.g. `openab.dev`)
+   - Subdomain + Domain: e.g. `your_custom.domain.com`
    - Service: `http://localhost:8080`
 
 ## Step 2: Create the Telegram Bot Token Secret
@@ -130,7 +129,7 @@ kubectl patch deployment openab-kiro-gateway -n openab --type=json -p '[
 ## Step 5: Set the Telegram Webhook
 
 ```bash
-curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=https://your-domain.example.com/webhook/telegram"
+curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=https://your_custom.domain.com/webhook/telegram"
 ```
 
 Verify:
