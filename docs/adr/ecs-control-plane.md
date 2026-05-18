@@ -63,10 +63,12 @@ metadata:
   namespace: prod
 spec:
   replicas: 2
+  capacityProvider: FARGATE        # FARGATE (default) or FARGATE_SPOT
+  size: small                      # small | medium | large | custom
   taskDefinition:
     image: 123456789.dkr.ecr.us-east-1.amazonaws.com/openab:latest
-    cpu: 256
-    memory: 512
+    cpu: 256                       # override when size=custom
+    memory: 512                    # override when size=custom
     environment:
       - name: BACKEND_TYPE
         value: bedrock
@@ -80,9 +82,37 @@ spec:
 ```
 
 Key fields:
+- `spec.capacityProvider` — `FARGATE` (default, on-demand) or `FARGATE_SPOT` (up to 70% cost savings, with interruption risk)
+- `spec.size` — predefined instance sizes (see table below); use `custom` to set cpu/memory directly
 - `spec.taskDefinition` — maps directly to ECS RegisterTaskDefinition
 - `spec.backend` — OAB-specific config injected as environment/secrets
 - `spec.networking` — ECS awsvpc configuration
+
+### Instance Sizes
+
+| Size | vCPU | Memory | Use Case |
+|------|------|--------|----------|
+| `small` | 256 (.25 vCPU) | 512 MB | Lightweight agents, low traffic |
+| `medium` | 512 (.5 vCPU) | 1024 MB | Standard workloads |
+| `large` | 1024 (1 vCPU) | 2048 MB | High-throughput or multi-backend |
+| `xlarge` | 2048 (2 vCPU) | 4096 MB | Heavy compute, large context |
+| `custom` | user-defined | user-defined | Full control via cpu/memory fields |
+
+When `size` is set to a named value, `cpu` and `memory` in `taskDefinition` are ignored. When `size=custom`, `cpu` and `memory` are required.
+
+### Capacity Provider Strategy
+
+```yaml
+# Cost-optimized: prefer spot, fall back to on-demand
+spec:
+  capacityProvider: FARGATE_SPOT
+
+# Production: guaranteed capacity
+spec:
+  capacityProvider: FARGATE
+```
+
+FARGATE_SPOT is suitable for stateless agents that can tolerate interruption (OAB reconnects automatically). For agents with long-running sessions or strict SLA requirements, use FARGATE.
 
 ---
 
