@@ -145,7 +145,7 @@ Bot agents (Discord, Telegram, Slack) are inherently **single-instance** — the
 Rules:
 - `replicas: 1` — default and only valid value for bot-type agents
 - Schema validation rejects `replicas > 1` when `spec.config.channels` contains bot-type channels
-- Future: `replicas > 1` allowed for stateless HTTP/webhook agents with a load balancer
+- Future: `replicas > 1` may be considered for stateless webhook receivers with deduplication, but is not planned
 
 For HA of bot agents, the controller relies on ECS service auto-recovery (task restart on failure) rather than multiple replicas.
 
