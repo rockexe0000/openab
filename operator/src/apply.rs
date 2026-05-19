@@ -2,7 +2,7 @@ use crate::manifest::OABServiceManifest;
 use anyhow::{Context, Result};
 use aws_sdk_ecs::types::{
     AssignPublicIp, AwsVpcConfiguration, CapacityProviderStrategyItem, ContainerDefinition,
-    KeyValuePair, LaunchType, NetworkConfiguration, Secret,
+    KeyValuePair, NetworkConfiguration, Secret,
 };
 use aws_sdk_s3::primitives::ByteStream;
 use std::path::Path;
@@ -58,7 +58,18 @@ async fn apply_one(
 ) -> Result<()> {
     let service_name = m.ecs_service_name();
     let bucket = "oab-control-plane";
-    let generation = 1; // Phase 1: simple increment (future: read from S3 + bump)
+
+    // Read current generation from S3 manifest (if exists), increment
+    let manifest_key = format!("manifests/{}/{}.yaml", m.metadata.namespace, m.metadata.name);
+    let current_gen = match s3.get_object().bucket(bucket).key(&manifest_key).send().await {
+        Ok(resp) => {
+            let bytes = resp.body.collect().await?.into_bytes();
+            let existing: OABServiceManifest = serde_yaml::from_slice(&bytes)?;
+            existing.metadata.generation
+        }
+        Err(_) => 0,
+    };
+    let generation = current_gen + 1;
 
     // 1. Render config.toml and upload to S3 (immutable path)
     let config_toml = render_config_toml(&m.spec.config);
@@ -74,8 +85,10 @@ async fn apply_one(
         .await
         .context("failed to upload config to S3")?;
 
-    // 2. Upload manifest to S3 (record of desired state)
-    let manifest_yaml = serde_yaml::to_string(m)?;
+    // 2. Upload manifest to S3 (record of desired state, with updated generation)
+    let mut manifest_to_store = serde_yaml::to_value(m)?;
+    manifest_to_store["metadata"]["generation"] = serde_yaml::Value::Number(generation.into());
+    let manifest_yaml = serde_yaml::to_string(&manifest_to_store)?;
     let manifest_key = format!("manifests/{}/{}.yaml", m.metadata.namespace, m.metadata.name);
     s3.put_object()
         .bucket(bucket)
@@ -207,7 +220,6 @@ async fn apply_one(
             .desired_count(1)
             .capacity_provider_strategy(cap_strategy)
             .network_configuration(network_config)
-            .launch_type(LaunchType::Fargate)
             .send()
             .await
             .context("failed to create ECS service")?;

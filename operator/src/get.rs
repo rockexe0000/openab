@@ -17,7 +17,8 @@ pub async fn run(
         let svc_name = if name.starts_with("oab-") {
             name.to_string()
         } else {
-            format!("oab-prod-{}", name)
+            // Try to find by listing all oab- services and matching the name suffix
+            format!("oab-prod-{}", name) // TODO: support --namespace flag
         };
         vec![svc_name]
     } else {

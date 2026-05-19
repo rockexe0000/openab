@@ -13,6 +13,8 @@ pub struct OABServiceManifest {
 pub struct Metadata {
     pub name: String,
     pub namespace: String,
+    #[serde(default)]
+    pub generation: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
