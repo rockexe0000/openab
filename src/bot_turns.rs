@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// A human message resets both soft and hard counters to 0, allowing bots to
 /// resume. This is *not* a lifetime total — it guards against runaway loops
 /// between human resets.
-pub const HARD_BOT_TURN_LIMIT: u32 = 100;
+pub const HARD_BOT_TURN_LIMIT: u32 = 1000;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TurnResult {
@@ -159,6 +159,14 @@ mod tests {
             assert_eq!(t.on_bot_message("t1"), TurnResult::Ok);
         }
         assert_eq!(t.on_bot_message("t1"), TurnResult::HardLimit);
+    }
+
+    #[test]
+    fn hard_limit_does_not_fire_at_legacy_100() {
+        let mut t = BotTurnTracker::new(HARD_BOT_TURN_LIMIT + 1);
+        for i in 1..=100 {
+            assert_eq!(t.on_bot_message("t1"), TurnResult::Ok, "turn {i}");
+        }
     }
 
     #[test]
