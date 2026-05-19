@@ -6,6 +6,8 @@ on:
       - "src/**"
       - "gateway/**"
       - "gateway/Cargo.lock"
+      - "operator/**"
+      - "operator/Cargo.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "Dockerfile*"
@@ -58,3 +60,31 @@ jobs:
 
       - name: cargo test
         run: cargo test
+
+  operator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operator
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: operator
+
+      - name: cargo check
+        run: cargo check
+
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+      - name: cargo test
+        run: cargo test
+
+      - name: cargo build
+        run: cargo build --release
