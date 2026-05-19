@@ -169,7 +169,7 @@ spec:
       subnets: [subnet-abc, subnet-def]
       securityGroups: [sg-oab]
     discord:
-      autoRegister: true          # controller creates Bot via Discord API
+      enabled: true               # all agents use Discord
   agents:
     - name: kiro-01
       config: { agent: { backend: kiro } }
@@ -197,20 +197,24 @@ spec:
       config: { agent: { backend: gemini } }
 ```
 
-### Discord Auto-Registration Flow
+### Discord Bot Provisioning Flow
 
-When `discord.autoRegister: true`, the controller provisions Discord Bots automatically:
+Since Discord does not offer a public API for Bot creation, the actual flow for fleet provisioning is:
 
 ```
+Pre-requisite (manual, one-time per agent):
+  → Create Bot in Discord Developer Portal
+  → Store token in SSM: /oab/{namespace}/{name}/discord-token
+  → Note the OAuth2 invite URL
+
 oabctl apply -f fleet.yaml
   │
   │  For each agent:
-  ├─ 1. Discord API: POST /applications → create Bot Application
-  ├─ 2. Discord API: POST /applications/{id}/bot → get Bot Token
-  ├─ 3. Store token → SSM /oab/{namespace}/{name}/discord-token
-  ├─ 4. Generate OAuth2 invite URL
-  ├─ 5. Create ECS Service (desiredCount=1)
-  └─ 6. Write status (phase=Running, inviteUrl=...)
+  ├─ 1. Validate spec + verify secret exists in SSM
+  ├─ 2. Render config.toml → S3 artifact (immutable, per generation)
+  ├─ 3. Register ECS TaskDefinition (pinned to config artifact + secrets)
+  ├─ 4. Create ECS Service (desiredCount=1)
+  └─ 5. Write status (phase=Running)
 ```
 
 **Apply output:**
@@ -218,38 +222,47 @@ oabctl apply -f fleet.yaml
 ```bash
 $ oabctl apply -f fleet.yaml
 
-✓ kiro-01   provisioned → https://discord.com/oauth2/authorize?client_id=AAA&scope=bot
-✓ kiro-02   provisioned → https://discord.com/oauth2/authorize?client_id=BBB&scope=bot
-✓ kiro-03   provisioned → https://discord.com/oauth2/authorize?client_id=CCC&scope=bot
-✓ codex-01  provisioned → https://discord.com/oauth2/authorize?client_id=DDD&scope=bot
-✓ codex-02  provisioned → https://discord.com/oauth2/authorize?client_id=EEE&scope=bot
-✓ gemini-01 provisioned → https://discord.com/oauth2/authorize?client_id=FFF&scope=bot
-✓ gemini-02 provisioned → https://discord.com/oauth2/authorize?client_id=GGG&scope=bot
-✓ gemini-03 provisioned → https://discord.com/oauth2/authorize?client_id=HHH&scope=bot
-✓ gemini-04 provisioned → https://discord.com/oauth2/authorize?client_id=III&scope=bot
-✓ gemini-05 provisioned → https://discord.com/oauth2/authorize?client_id=JJJ&scope=bot
+✓ kiro-01   provisioned (ECS service created, task running)
+✓ kiro-02   provisioned (ECS service created, task running)
+✓ kiro-03   provisioned (ECS service created, task running)
+✓ codex-01  provisioned (ECS service created, task running)
+✓ codex-02  provisioned (ECS service created, task running)
+✓ gemini-01 provisioned (ECS service created, task running)
+...
 
-10 agents provisioned. Add them to your server using the URLs above.
+10 agents provisioned.
 ```
 
-**User's only manual step:** paste the OAuth URL into a browser → authorize the bot to join their Discord server.
+**User's manual steps (one-time):** create bots in Discord Developer Portal, store tokens, add bots to server via OAuth URL.
 
 ### Responsibility Model
 
 | Layer | Responsibility |
 |-------|---------------|
-| `oabctl` / Controller | Desired state: create Bots, store tokens, create ECS Services |
+| `oabctl` / Controller | Desired state: create ECS Services; **observe** ECS task/service status → write back to `status/` |
 | ECS | Runtime health: task dies → auto-restart (desiredCount=1) |
-| User | One-time: add bots to Discord server via OAuth URL |
+| User | One-time: create bots in Discord Developer Portal, add to server via OAuth URL |
 
-The controller does **not** monitor agent health — ECS Service already maintains desired state. If a task crashes, ECS replaces it automatically. The controller only acts when the **desired state** (manifest) changes.
+The controller does **not** restart tasks — ECS handles that. But the controller **does** observe ECS service/task/deployment status on each reconcile cycle and writes it back to `status/{ns}/{name}.json`. This enables `oabctl get`, `oabctl wait --for=Available`, and `status.phase` / `status.conditions` to work.
 
 ### Prerequisites for Auto-Registration
 
-- Discord **user OAuth2 bearer token** (not bot token) stored in SSM: `/oab/discord-developer/user-token` — required to call `POST /applications`
-- Controller IAM role needs `ssm:PutParameter` to store generated bot tokens
-- Discord API rate limit: ~5 app creations per minute (controller handles backoff)
-- **Note:** `OABFleet` + `autoRegister` is **Phase 2**. Phase 1 requires manual Bot creation in Discord Developer Portal.
+> **⚠️ Note:** Discord does not provide a public API to programmatically create Bot Applications. `autoRegister` is a **future research item** pending Discord API changes or partnership access. For now, bot credentials must be pre-created manually in the Discord Developer Portal.
+
+**Phase 1/2 approach:** Each agent's bot token is pre-created and stored in SSM/Secrets Manager. The `OABFleet` spec references existing credentials:
+
+```yaml
+spec:
+  agents:
+    - name: kiro-01
+      config: { agent: { backend: kiro } }
+      secrets:
+        - name: DISCORD_BOT_TOKEN
+          source: ssm
+          path: /oab/kiro-01/discord-token   # pre-created
+```
+
+**Future (if Discord API allows):** `autoRegister: true` would automate Bot creation. This requires a separate research ADR.
 
 ---
 
@@ -370,16 +383,18 @@ Config artifacts are **immutable per generation** — once written, never overwr
 ```bash
 #!/bin/bash
 set -e
-# Download controller-rendered config (pinned to specific generation)
-aws s3 cp "$CONFIG_ARTIFACT_PATH" /home/agent/config.toml
-# Restore mutable state (memory, knowledge base) if bootstrapFrom is set
+# 1. Restore mutable state FIRST (memory, knowledge base)
 if [ -n "$BOOTSTRAP_FROM" ]; then
   aws s3 cp "$BOOTSTRAP_FROM" /tmp/bootstrap.tar.gz
   tar xzf /tmp/bootstrap.tar.gz -C /home/agent/
   rm /tmp/bootstrap.tar.gz
 fi
+# 2. Download controller-rendered config LAST (overwrites any config.toml from archive)
+aws s3 cp "$CONFIG_ARTIFACT_PATH" /home/agent/config.toml
 exec /usr/local/bin/openab
 ```
+
+**Order matters:** bootstrap archive is restored first, then the controller-rendered `config.toml` overwrites any stale config from the archive. `oabctl snapshot` must exclude `config.toml` from the archive (it's controller-managed, not user state).
 
 ### What Goes Where
 
