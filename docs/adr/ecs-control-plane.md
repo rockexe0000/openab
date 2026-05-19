@@ -141,30 +141,12 @@ status:
 
 ### Replicas Semantics
 
-WebSocket-based adapters (Discord, Telegram, Slack RTM) are **single-consumer** — only one instance can hold the gateway connection. Running multiple replicas would cause duplicate message processing.
+OAB agents are **single-instance** by design — each agent holds one adapter connection (WebSocket gateway for Discord/Telegram/Slack). There is no load balancing across agent replicas.
 
 **Rules:**
-- `replicas: 1` — default and required for WebSocket adapters
-- `replicas > 1` — only valid when all enabled adapters use **webhook mode** (HTTP-based, load-balanceable)
-- Controller **rejects** `replicas > 1` at validation time if any WebSocket adapter is enabled
-
-```yaml
-# ✅ Valid: webhook mode, can scale
-spec:
-  replicas: 3
-  config:
-    discord:
-      enabled: true
-      mode: webhook    # HTTP interactions endpoint
-
-# ❌ Rejected: websocket mode cannot scale
-spec:
-  replicas: 2
-  config:
-    discord:
-      enabled: true
-      # mode defaults to websocket → validation error
-```
+- `replicas: 1` — the only valid value
+- Controller **rejects** `replicas > 1` at validation time
+- Scaling is horizontal by deploying **more agents** (each with its own bot token), not by replicating one agent
 
 ---
 
@@ -379,7 +361,7 @@ oabctl wait my-agent --for=Available # block until condition met
 $ oabctl apply -f prod/my-agent.yaml
 
 ✓ Schema validated (oab.dev/v1 OABService)
-✓ Replicas check passed (replicas=1, websocket adapter)
+✓ Replicas check passed (replicas=1)
 ✓ Uploaded to s3://oab-control-plane/manifests/prod/my-agent.yaml
 ✓ Generation: 3 → 4
 ⏳ Waiting for reconciliation...
@@ -421,7 +403,7 @@ cluster = "oab-prod"
 | Startup wrapper downloads config + bootstrap | EFS / shared volumes |
 | `metadata.generation` / `status.observedGeneration` | Multi-region |
 | Per-agent secrets via SSM/SM | Auto-rotation detection |
-| Replicas validation (reject >1 for WS) | Auto-scaling policies |
+| Replicas validation (reject >1) | Auto-scaling policies |
 
 ### Phase 2
 
@@ -472,7 +454,7 @@ Key design choices:
 - **Config delivery**: controller renders `config.toml` to S3 artifact; startup wrapper downloads it
 - **Secrets**: per-agent SSM/Secrets Manager references; never in bootstrap archive
 - **Bootstrap**: mutable runtime state only (memory, knowledge base)
-- **Replicas**: validated at apply time; WebSocket adapters locked to 1
+- **Replicas**: always 1; scale by deploying more agents, not replicating one
 - **Generation**: explicit `metadata.generation` / `status.observedGeneration` (not S3 VersionId)
 - **Phase 1 scope**: narrow (create/update only, poll-based, single controller)
 
