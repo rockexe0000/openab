@@ -148,6 +148,108 @@ OAB agents are **single-instance** by design — each agent holds one adapter co
 - Controller **rejects** `replicas > 1` at validation time
 - Scaling is horizontal by deploying **more agents** (each with its own bot token), not by replicating one agent
 
+### Fleet Provisioning (`OABFleet`)
+
+Enterprise scenario: provision 10-20 agents in one apply. Controller handles everything including Discord Bot registration.
+
+```yaml
+apiVersion: oab.dev/v1
+kind: OABFleet
+metadata:
+  name: enterprise-team
+  namespace: prod
+spec:
+  defaults:
+    capacityProvider: FARGATE_SPOT
+    cpu: 512
+    memory: 1024
+    taskDefinition:
+      image: ghcr.io/openabdev/openab:latest
+    networking:
+      subnets: [subnet-abc, subnet-def]
+      securityGroups: [sg-oab]
+    discord:
+      autoRegister: true          # controller creates Bot via Discord API
+  agents:
+    - name: kiro-01
+      config: { agent: { backend: kiro } }
+    - name: kiro-02
+      config: { agent: { backend: kiro } }
+    - name: kiro-03
+      config: { agent: { backend: kiro } }
+    - name: codex-01
+      config: { agent: { backend: codex } }
+      cpu: 1024
+      memory: 2048               # override defaults
+    - name: codex-02
+      config: { agent: { backend: codex } }
+      cpu: 1024
+      memory: 2048
+    - name: gemini-01
+      config: { agent: { backend: gemini } }
+    - name: gemini-02
+      config: { agent: { backend: gemini } }
+    - name: gemini-03
+      config: { agent: { backend: gemini } }
+    - name: gemini-04
+      config: { agent: { backend: gemini } }
+    - name: gemini-05
+      config: { agent: { backend: gemini } }
+```
+
+### Discord Auto-Registration Flow
+
+When `discord.autoRegister: true`, the controller provisions Discord Bots automatically:
+
+```
+oabctl apply -f fleet.yaml
+  │
+  │  For each agent:
+  ├─ 1. Discord API: POST /applications → create Bot Application
+  ├─ 2. Discord API: POST /applications/{id}/bot → get Bot Token
+  ├─ 3. Store token → SSM /oab/{namespace}/{name}/discord-token
+  ├─ 4. Generate OAuth2 invite URL
+  ├─ 5. Create ECS Service (desiredCount=1)
+  └─ 6. Write status (phase=Running, inviteUrl=...)
+```
+
+**Apply output:**
+
+```bash
+$ oabctl apply -f fleet.yaml
+
+✓ kiro-01   provisioned → https://discord.com/oauth2/authorize?client_id=AAA&scope=bot
+✓ kiro-02   provisioned → https://discord.com/oauth2/authorize?client_id=BBB&scope=bot
+✓ kiro-03   provisioned → https://discord.com/oauth2/authorize?client_id=CCC&scope=bot
+✓ codex-01  provisioned → https://discord.com/oauth2/authorize?client_id=DDD&scope=bot
+✓ codex-02  provisioned → https://discord.com/oauth2/authorize?client_id=EEE&scope=bot
+✓ gemini-01 provisioned → https://discord.com/oauth2/authorize?client_id=FFF&scope=bot
+✓ gemini-02 provisioned → https://discord.com/oauth2/authorize?client_id=GGG&scope=bot
+✓ gemini-03 provisioned → https://discord.com/oauth2/authorize?client_id=HHH&scope=bot
+✓ gemini-04 provisioned → https://discord.com/oauth2/authorize?client_id=III&scope=bot
+✓ gemini-05 provisioned → https://discord.com/oauth2/authorize?client_id=JJJ&scope=bot
+
+10 agents provisioned. Add them to your server using the URLs above.
+```
+
+**User's only manual step:** paste the OAuth URL into a browser → authorize the bot to join their Discord server.
+
+### Responsibility Model
+
+| Layer | Responsibility |
+|-------|---------------|
+| `oabctl` / Controller | Desired state: create Bots, store tokens, create ECS Services |
+| ECS | Runtime health: task dies → auto-restart (desiredCount=1) |
+| User | One-time: add bots to Discord server via OAuth URL |
+
+The controller does **not** monitor agent health — ECS Service already maintains desired state. If a task crashes, ECS replaces it automatically. The controller only acts when the **desired state** (manifest) changes.
+
+### Prerequisites for Auto-Registration
+
+- Discord Developer Portal credentials stored in SSM: `/oab/discord-developer/token`
+- Controller IAM role needs `ssm:PutParameter` to store generated bot tokens
+- Discord API rate limit: ~5 app creations per minute (controller handles backoff)
+
 ---
 
 ## 4. Config Delivery Model
