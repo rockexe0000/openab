@@ -390,16 +390,69 @@ Before deleting an ECS service, the controller:
 
 ---
 
-## 9. Open Questions
+## 9. Per-Agent Secret Injection
 
-1. **Secrets management** — inject via ECS Secrets (SSM/SecretsManager reference in task def) or controller-managed?
-2. **Multi-region** — single controller per region, or global controller with regional reconcilers?
-3. **Observability** — CloudWatch metrics from the controller, or push to a shared OAB dashboard?
-4. **Upgrade strategy** — how does the controller upgrade itself without downtime?
-5. **Networking isolation** — shared VPC or per-service security group rules?
+Each agent/bot has its **own** bot token and credentials — no token sharing between agents.
+
+### Design Principle
+
+- Each `AgentDeployment` owns its secrets (1:1 mapping)
+- Controller never touches secret values — it only wires references into ECS Task Definitions
+- ECS native `secrets` field handles injection at runtime
+- IAM scoping ensures each task role can only read its own secret path
+
+### Spec
+
+```yaml
+apiVersion: openab.dev/v1
+kind: AgentDeployment
+metadata:
+  name: chaodu
+spec:
+  secrets:
+    - name: DISCORD_BOT_TOKEN
+      source: ssm                      # ssm | secretsmanager
+      path: /oab/chaodu/discord-token
+    - name: LLM_API_KEY
+      source: secretsmanager
+      arn: arn:aws:secretsmanager:us-east-1:123:secret:oab/chaodu/llm-key
+```
+
+### Controller Behavior
+
+1. **Deploy** — maps `spec.secrets` to ECS TaskDefinition `secrets` field:
+   ```json
+   {
+     "secrets": [
+       { "name": "DISCORD_BOT_TOKEN", "valueFrom": "/oab/chaodu/discord-token" },
+       { "name": "LLM_API_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:123:secret:oab/chaodu/llm-key" }
+     ]
+   }
+   ```
+2. **IAM** — controller creates/assigns a task execution role scoped to the agent's secret path:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": ["ssm:GetParameters", "secretsmanager:GetSecretValue"],
+     "Resource": [
+       "arn:aws:ssm:*:*:parameter/oab/chaodu/*",
+       "arn:aws:secretsmanager:*:*:secret:oab/chaodu/*"
+     ]
+   }
+   ```
+3. **Rotation** — when a secret is rotated in SSM/Secrets Manager, user runs `oabctl restart <agent>` (or sets `spec.secrets.autoRestart: true`) to force a new task deployment that picks up the new value.
 
 ---
 
-## 10. Decision
+## 10. Open Questions
+
+1. **Multi-region** — single controller per region, or global controller with regional reconcilers?
+2. **Observability** — CloudWatch metrics from the controller, or push to a shared OAB dashboard?
+3. **Upgrade strategy** — how does the controller upgrade itself without downtime?
+4. **Networking isolation** — shared VPC or per-service security group rules?
+
+---
+
+## 11. Decision
 
 We adopt the CRD + Operator pattern on ECS with an **S3-only state store** and a **`oabctl` CLI** for the operator interface. The controller runs as a single ECS service that reconciles OABService manifests (stored in S3) against actual ECS state. DynamoDB is deferred to Phase 2 when multi-replica HA is needed. This gives ECS-native teams the same declarative, self-healing deployment experience that K8s operators provide — with minimal infrastructure footprint.
