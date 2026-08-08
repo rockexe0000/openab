@@ -183,6 +183,17 @@ entries:
     version: 0.1.1
   openab:
   - apiVersion: v2
+    appVersion: 0.10.0-beta.3
+    created: "2026-08-08T01:57:14.768430323Z"
+    description: A lightweight, secure, cloud-native ACP harness that bridges Discord
+      and any ACP-compatible coding CLI.
+    digest: 98ac27ed47816a7f0dbd8f886dc60749503f2b7e2f62a54d6961d270af107559
+    name: openab
+    type: application
+    urls:
+    - https://github.com/rockexe0000/openab/releases/download/openab-0.10.0-beta.3/openab-0.10.0-beta.3.tgz
+    version: 0.10.0-beta.3
+  - apiVersion: v2
     appVersion: 0.8.4-beta.3
     created: "2026-05-23T02:46:54.748822683Z"
     description: A lightweight, secure, cloud-native ACP harness that bridges Discord
@@ -1102,6 +1113,30 @@ entries:
     urls:
     - https://github.com/openabdev/openab/releases/download/openab-0.3.3/openab-0.3.3.tgz
     version: 0.3.3
+  openab-feishu:
+  - apiVersion: v2
+    appVersion: 0.8.3
+    created: "2026-08-08T01:57:14.968864449Z"
+    description: OpenAB + Feishu/Lark — single-pod deployment with gateway (WebSocket
+      by default, optional Cloudflare Tunnel for webhook mode).
+    digest: d30f63237838cada0e9dd6c057ef2850bca286496f83c0af0577dc23a964db31
+    name: openab-feishu
+    type: application
+    urls:
+    - https://github.com/rockexe0000/openab/releases/download/openab-feishu-0.1.0/openab-feishu-0.1.0.tgz
+    version: 0.1.0
+  openab-line:
+  - apiVersion: v2
+    appVersion: 0.8.5-beta.9
+    created: "2026-08-08T01:57:15.15990718Z"
+    description: OpenAB + LINE — single-pod deployment with gateway sidecar and optional
+      Cloudflare Tunnel.
+    digest: ee27c65ca0cfd4ebdfd9f688729733bcdd829a480fa3edf06980685a81a04e39
+    name: openab-line
+    type: application
+    urls:
+    - https://github.com/rockexe0000/openab/releases/download/openab-line-0.1.0/openab-line-0.1.0.tgz
+    version: 0.1.0
   openab-telegram:
   - apiVersion: v2
     appVersion: 0.8.3
@@ -1114,4 +1149,4 @@ entries:
     urls:
     - https://github.com/rockexe0000/openab/releases/download/openab-telegram-0.1.0/openab-telegram-0.1.0.tgz
     version: 0.1.0
-generated: "2026-05-23T02:46:54.909360525Z"
+generated: "2026-08-08T01:57:15.343076355Z"
